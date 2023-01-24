@@ -1,1 +1,2 @@
-from .Lomino import client
+from .client import Client
+
