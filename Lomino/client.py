@@ -9,19 +9,14 @@ from base64 import b64encode, b64decode
 from functools import reduce
 from time import time as timestamp
 from datetime import datetime
+from websocket import WebSocket
 
 req = Session()
+web = WebSocket()
 
 class Exceptions(Exception):
 	def __init__(*args, **kwargs):
 		Exception.__init__(*args, **kwargs)
-
-
-def get_code(link: str, proxies : dict = None):
-	request = req.get(f'https://service.narvii.com/api/v1/g/s/link-resolution?q={link}',headers = {'NDCDEVICEID':Client().device_generator()}, proxies = proxies)
-	if request.status_code!=200:
-		raise Exceptions(request.text)
-	return request.json()
 	
 class Client:
 	def __init__(self, device : str = None,comId : str = None, proxies : dict = None):
@@ -51,6 +46,13 @@ class Client:
 	def get_time_zone(self):
 		times = ["-60","-120 ","-180","-240","-300","-360","-420","-480","-540","-600","+780","+720","+660","+600","+540","+480","+420","+360","+300","+240","+180","+120","+60","+0"]
 		return int(times[datetime.utcnow().hour])
+	
+	def get_code(self, link: str, proxies : dict = None):
+		request = req.get(f'{self.api}/g/s/link-resolution?q={link}',headers = self.headers, proxies = proxies)
+		if request.status_code!=200:
+			raise Exceptions(request.text)
+		else:
+			return request.json()
 	
 	def get_from_sid(self, sid : str):
 		return loads(b64decode(reduce(lambda a, e: a.replace(*e), ("-+", "_/"), sid + "=" * (-len(sid) % 4)).encode())[1:-20].decode())
@@ -102,9 +104,10 @@ class Client:
 		
 	def join_chat(self, chatId : str):
 		if self.comId:
-			request = req.post(f'{self.api}/x{self.comId}/s/chat/thread/{chatId}/member/{self.userId}',headers = self.headers, proxies = self.proxies)
+			api = f'{self.api}/x{self.comId}/s/chat/thread/{chatId}/member/{self.userId}'
 		else:
-			request = req.post(f'{self.api}/g/s/chat/thread/{chatId}/member/{self.userId}',headers = self.headers, proxies = self.proxies)
+			api = f'{self.api}/g/s/chat/thread/{chatId}/member/{self.userId}'
+		request = req.post(api, headers = self.headers, proxies = self.proxies)
 		if request.status_code!=200:
 			raise Exceptions(request.text)
 		else:
@@ -145,9 +148,10 @@ class Client:
 			
 	def leave_chat(self, chatId : str):
 		if self.comId:
-			request = req.delete(f'{self.api}/x{self.comId}/s/chat/thread/{chatId}/member/{self.userId}',headers = self.headers, proxies = self.proxies)
+			api = f'{self.api}/x{self.comId}/s/chat/thread/{chatId}/member/{self.userId}'
 		else:
-			request = req.delete(f'{self.api}/g/s/chat/thread/{chatId}/member/{self.userId}',headers = self.headers, proxies = self.proxies)
+			api = f'{self.api}/g/s/chat/thread/{chatId}/member/{self.userId}'
+		request = req.delete(api,headers = self.headers, proxies = self.proxies)
 		if request.status_code!=200:
 			raise Exceptions(request.text)
 		else:
@@ -160,11 +164,8 @@ class Client:
 		else:
 			return request.json()
 
-	def subscribe_vip(self, userId : str, Renew : bool = False,transactionId : str = None):
-		if transactionId:
-			transactionId = transactionId
-		else:
-			transactionId = UUID(hexlify(urandom(16)).decode('ascii'))
+	def subscribe_vip(self, userId : str, Renew : bool = False):
+		transactionId = UUID(hexlify(urandom(16)).decode('ascii'))
 		data = dumps({'timestamp':int(timestamp()*1000),
 		'paymentContext':{'isAutoRenew':
 			Renew,
@@ -218,14 +219,15 @@ class Client:
 				data['mediaUploadValueContentType'] = 'image/gif'
 				data['mediaUhqEnabled'] = True
 			else:
-				raise TypeError("spicify file type")
+				raise TypeError("يا غبي حط مسار للملف")
 			data["mediaUploadValue"] = b64encode(file.read()).decode()
 		data = dumps(data)
 		self.headers['NDC-MSG-SIG'] = self.sig(data)
 		if self.comId:
-			request = req.post(f'{self.api}/x{self.comId}/s/chat/thread/{chatId}/message',data = data, headers = self.headers, proxies = self.proxies)
+			api = f'{self.api}/x{self.comId}/s/chat/thread/{chatId}/message'
 		else:
-			request = req.post(f'{self.api}/g/s/chat/thread/{chatId}/message',data = data, headers = self.headers, proxies = self.proxies)
+			request = '{self.api}/g/s/chat/thread/{chatId}/message'
+		request = req.post(api, data = data, headers = self.headers, proxies = self.proxies)
 		if request.status_code!=200:
 			raise Exception(request.text)
 		else:
@@ -241,3 +243,214 @@ class Client:
 			raise Exceptions(request.text)
 		else:
 			return request.json()
+			
+	def claim_reputation(self, chatId : str):
+		request = req.post(f'{self.api}/x{self.comId}/s/chat/thread/{chatId}/avchat-reputation',headers = self.headers, proxies = self.proxies)
+		if request.status_code!=200:
+			raise Exceptions(request.text)
+		else:
+			return request.json()
+			
+	def verify(self, email : str, code : str):
+		data = dumps({'identity': email,
+		'data': {'code': code},
+		'type': 1,
+		'deviceID': self.device})
+		self.headers['NDC-MSG-SIG'] = self.sig(data)
+		request = req.post(f'{self.api}/g/s/auth/activate-email',data = data, headers = self.headers, proxies = self.proxies)
+		if request.status_code!=200:
+			raise Exceptions(request.text)
+		else:
+			return request.json()
+			
+	def sign_up(self, nickname : str, email : str, password : str, code : str = None, address : str = None):
+		data = dumps({
+		'nickname': nickname,
+		'email': email,
+		'secret': f'0 {password}',
+		'deviceID': self.device,
+		'clientType': 100,
+		'latitude': 0,
+		'longitude': 0,
+		'address': address,
+		'clientCallbackURL': 'narviiapp://relogin',
+		'validationContext': {'data':{'code': code},
+		'type': 1,
+		'identity': email,
+		'timestamp': int(timestamp()*1000)}})
+		self.headers['NDC-MSG-SIG'] = self.sig(data)
+		request = req.post(f'{self.api}/g/s/auth/register',data = data, headers = self.headers, proxies = self.proxies)
+		if request.status_code!=200:
+			raise Exceptions(request.text)
+		else:
+			return request.json()
+	
+	def get_about_wallet(self):
+		request = req.get(f"{self.api}/g/s/wallet", headers=self.headers, proxies=self.proxies)
+		if request.status_code != 200:
+			return Exceptions(request.text)
+		else:
+			return request.json()
+	
+	def send_coins(self, coins : int, blogId : str = None, wikiId : str = None, chatId : str = None):
+		transactionId = UUID(hexlify(urandom(16)).decode('ascii'))
+		data = {'coins': int(coins),
+		'tippingContext': 
+		{'transactionId': transactionId},
+		'timestamp': int(timestamp() *1000)}
+		if blogId:
+			api = f'{self.api}/x{self.comId}/s/blog/{blogId}/tipping'
+		elif chatId:
+			api = f'{self.api}/x{self.comId}/s/chat/thread/{chatId}/tipping'
+		elif wikiId:
+			api = f'{self.api}/x{self.comId}/s/tipping'
+			data['objectType'] = 2
+			data['objectId'] = wikiId
+		else:
+			raise TypeError('يحمار حط ايدي')
+		data = dumps(data)
+		self.headers['NDC-MSG-SIG'] = self.sig(data)
+		request = req.post(url, data = data, headers = self.headers, proxies = self.proxies)
+		if req.status_code!=200:
+			raise Exceptions(request.text)
+		else:
+			return request.json()
+
+	def get_about_user(self, userId : str):
+		if self.comId:
+			api = f'{self.api}/x{self.comId}/s/user-profile/{userId}'
+		else:
+			api = f'{self.api}/g/s/user-profile/{userId}'
+		request = req.get(api, headers = self.headers, proxies = self.proxies)
+		if request.status_code!=200:
+			raise Exceptions(request.text)
+		else:
+			return request.json()
+	
+	def follow(self, userId : str):
+		if self.comId:
+			api = f'{self.api}/x{self.comId}/s/user-profile/{userId}/member'
+		else:
+			api = f'{self.api}/g/s/user-profile/{userId}/member'
+		data = dumps({
+		'timestamp': int(timestamp()*1000)})
+		self.headers['NDC-MSG-SIG'] = self.sig(data)
+		request = req.post(api, data = data, headers = self.headers, proxies = self.proxies)
+		if request.status_code!=200:
+			raise Exceptions(request.text)
+		else:
+			return request.json()
+	
+	def unfollow(self, userId : str):
+		if self.comId:
+			api = f'{self.api}/x{self.comId}/s/user-profile/{userId}/member/{self.userId}'
+		else:
+			api = f'{self.api}/g/s/user-profile/{userId}/member/{self.userId}'
+		data = dumps({
+		'timestamp': int(timestamp()*1000)})
+		self.headers['NDC-MSG-SIG'] = self.sig(data)
+		request = req.delete(api, data = data, headers = self.headers, proxies = self.proxies)
+		if request.status_code!=200:
+			raise Exceptions(request.text)
+		else:
+			return request.json()
+			
+	def comment(self, content : str = None, userId : str = None, replyTo : str = None, blogId : str = None, wikiId : str = None):
+		data = {'content': content, 'timestamp': int(timestamp() *1000)}
+		if replyTo:
+			data["respondTo"] = replyTo
+		elif userId:
+			api = f'{self.api}/x{self.comId}/s/user-profile/{userId}/comment'
+		elif blogId:
+			api = f'{self.api}/x{self.comId}/s/blog/{blogId}/comment'
+		elif wikiId:
+			api = f'{self.api}/x{self.comId}/s/item/{wikiId}/comment'
+		else:
+			raise TypeError('يا غبي حط تايب')
+		data = dumps(data)
+		self.headers['NDC-MSG-SIG'] = self.sig(data)
+		request = req.post(api, data = data, headers = self.headers, proxies = self.proxies)
+		if request.status_code!=200:
+			raise Exceptions(request.text)
+		else:
+			return request.json()
+	
+	def delete_comment(self, commentId : str, userId: str = None, blogId : str = None, wikiId : str = None):
+		if userId:
+			api = f'{self.api}/x{self.comId}/s/user-profile/{userId}/comment/{commentId}'
+		elif blogId:
+			api = f'{self.api}/x{self.comId}/s/blog/{blogId}/comment/{commentId}'
+		elif wikiId:
+			api = f'{self.api}/x{self.comId}/s/item/{wikiId}/comment/{commentId}'
+		else:
+			raise TypeError('حط تايب ولاك')
+		request = req.delete(api, headers = self.headers, proxies = self.proxies)
+		if request.status_code!=200:
+			raise Exceptions(request.text)
+		else:
+			return request.json()
+			
+	def post(self, title : str ,content : str, fans : bool = False, blog : bool = False, wiki : bool = False, backgroundColor : str = None, keywords : list = None, icon : str = None):
+		data = {'content': content,
+		'latitude': 0,
+		'longitude': 0,
+		'extensions': {'props': [],'fansOnly': fans,
+		'style': {
+		'backgroundColor': backgroundColor}},
+		'timestamp':int(timestamp() *1000)}
+		if blog is True:
+			data['type'] = 0
+			data['contentLanguage'] = 'ar'
+			data['title'] = title
+			data['eventSource'] = 'GlobalComposeMenu'
+			api = f'{self.api}/x{self.comId}/s/blog'
+		elif wiki is True:
+			data['icon'] = icon
+			data['keywords'] = keywords,
+			data['label'] = title
+			data['eventSource'] = 'GlobalComposeMenu'
+			api = f'{self.api}/x{self.comId}/s/item'
+		else:
+			raise TypeError('التايب غلط يباشا')
+		data = dumps(data)
+		self.headers['NDC-MSG-SIG'] = self.sig(data)
+		request = req.post(api, data = data, headers = self.headers, proxies = self.proxies)
+		if request.status_code!=200:
+			raise Exceptions(request.text)
+		else:
+			return request.json()
+	
+	def vote(self, blogId : str, optionId : str):
+		data = dumps({'value': 1,
+		'eventSource': 'PostDetailView',
+		'timestamp': int(timestamp() *1000)})
+		self.headers['NDC-MSG-SIG'] = self.sig(data)
+		request = req.post(f'{self.api}/x{self.comId}/s/blog/{blogId}/poll/option/{optionId}/vote', data = data, headers = self.headers, proxies = self.proxies)
+		if request.status_code!=200:
+			raise Exceptions(request.text)
+		else:
+			return request.json()
+	
+	def stream(self, chatId : str, joinRole : int = None, channelType : int = None, joinId : str = '72446', type : int = 112):
+		data = dumps({'o':{'ndcId': self.comId,
+		'threadId': chatId, 'joinRole': joinRole,
+		'channelType': channelType,
+		'id': joinId}, 't': type})
+		web_data = f'{self.device}|{int(timestamp()*1000)}'
+		self.headers['NDC-MSG-SIG'] = self.sig(web_data)
+		connect_video = web.connect(f'wss://ws1.narvii.com?signbody={web_data.replace("|", "%7C")}', header = self.headers,proxies = self.proxies)
+		web.send(data)
+	
+	def get_my_communities(self, start : int = 0, size : int = 25):
+		request = req.get(f'{self.api}/g/s/community/joined?v=1&start={start}&size={size}', headers = self.headers, proxies = self.proxies)
+		if request.status_code!=200:
+			raise Exceptions(request.text)
+		else:
+			return request.json()['communityList']
+	
+	def get_about_chat(self, chatId : str):
+		request = req.get(f'{self.api}/g/s/chat/thread/{chatId}', headers = self.headers, proxies = self.proxies)
+		if request.status_code!=200:
+			raise Exceptions(request.text)
+		else:
+			return request.json()['thread']
